@@ -1,0 +1,189 @@
+// Line Follower Robot
+// Arduino Mega + L298N Motor Driver + HW-870 IR Sensors
+// Counterclockwise oval track
+
+// IR Sensor pins
+#define LEFT_IR  A8
+#define RIGHT_IR A9
+
+// L298N Motor Driver pins
+#define IN3 10
+#define IN4 9
+#define IN1 12
+#define IN2 11
+
+// Tunable values
+#define DETECT_LIMIT      500
+#define FORWARD_SPEED     110
+#define TURN_SLIGHT       80
+#define TURN_SHARP        160
+#define TURN_DELAY        140
+#define BEFORE_TURN       10
+#define INSIDE_CORRECT    60  // very gentle inside correction speed
+
+char lastDirection = 'S';
+
+void setup() {
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  Serial.begin(9600);
+
+  // Starting push
+  setMotors(255, false, 255, false);
+  delay(40);
+}
+
+void setMotors(int leftSpeed, bool leftReverse, int rightSpeed, bool rightReverse) {
+  if (leftReverse) {
+    digitalWrite(IN1, LOW);
+    analogWrite(IN2, leftSpeed);
+  } else {
+    analogWrite(IN1, leftSpeed);
+    digitalWrite(IN2, LOW);
+  }
+  if (rightReverse) {
+    digitalWrite(IN3, LOW);
+    analogWrite(IN4, rightSpeed);
+  } else {
+    analogWrite(IN3, rightSpeed);
+    digitalWrite(IN4, LOW);
+  }
+}
+
+void moveForward() {
+  if (lastDirection != 'F') {
+    setMotors(255, false, 255, false);
+    lastDirection = 'F';
+    delay(20);
+  } else {
+    setMotors(FORWARD_SPEED, false, FORWARD_SPEED, false);
+  }
+}
+
+void stopMotors() {
+  if (lastDirection != 'S') {
+    setMotors(255, false, 255, false);
+    lastDirection = 'S';
+    delay(40);
+  } else {
+    setMotors(0, false, 0, false);
+  }
+}
+
+void insideCorrect() {
+  // Left sensor is inside sensor on counterclockwise track
+  // Only needs a very gentle nudge not a full turn
+  // Right side only drives forward to sweep counterclockwise
+  if (lastDirection != 'I') {
+    lastDirection = 'I';
+    setMotors(0, false, 0, false);
+    delay(BEFORE_TURN);
+  }
+  // Drive right side only to pivot counterclockwise
+  // left side stopped so no clockwise push
+  setMotors(0, false, INSIDE_CORRECT, false);
+  delay(30);
+
+  // Check sensors mid correction and break early
+  // if right sensor finds line
+  if (analogRead(RIGHT_IR) >= DETECT_LIMIT) {
+    lastDirection = 'F';
+    return;
+  }
+  setMotors(0, false, 0, false);
+  delay(10);
+}
+
+void turnLeft() {
+  if (lastDirection != 'L') {
+    lastDirection = 'L';
+    setMotors(0, false, 0, false);
+    delay(BEFORE_TURN);
+    setMotors(TURN_SLIGHT, true, TURN_SLIGHT, false);
+  } else {
+    setMotors(TURN_SHARP, true, TURN_SHARP, false);
+  }
+
+  // Check sensors every 20ms during turn
+  // break out early if line is found
+  int elapsed = 0;
+  while (elapsed < TURN_DELAY) {
+    delay(20);
+    elapsed += 20;
+    if (analogRead(LEFT_IR) < DETECT_LIMIT && analogRead(RIGHT_IR) >= DETECT_LIMIT) {
+      // Right sensor found line break out
+      lastDirection = 'F';
+      return;
+    }
+    if (analogRead(LEFT_IR) < DETECT_LIMIT && analogRead(RIGHT_IR) < DETECT_LIMIT) {
+      // Both sensors off line break out and let loop handle
+      return;
+    }
+  }
+}
+
+void turnRight() {
+  if (lastDirection != 'R') {
+    lastDirection = 'R';
+    setMotors(0, false, 0, false);
+    delay(BEFORE_TURN);
+    setMotors(TURN_SLIGHT, false, TURN_SLIGHT, true);
+  } else {
+    setMotors(TURN_SHARP, false, TURN_SHARP, true);
+  }
+
+  // Check sensors every 20ms during turn
+  // break out early if line is found
+  int elapsed = 0;
+  while (elapsed < TURN_DELAY) {
+    delay(20);
+    elapsed += 20;
+    if (analogRead(RIGHT_IR) < DETECT_LIMIT && analogRead(LEFT_IR) >= DETECT_LIMIT) {
+      // Left sensor found line break out
+      lastDirection = 'F';
+      return;
+    }
+    if (analogRead(LEFT_IR) < DETECT_LIMIT && analogRead(RIGHT_IR) < DETECT_LIMIT) {
+      // Both sensors off line break out and let loop handle
+      return;
+    }
+  }
+}
+
+void loop() {
+  int leftValue  = analogRead(LEFT_IR);
+  int rightValue = analogRead(RIGHT_IR);
+
+  Serial.print("Left: ");
+  Serial.print(leftValue);
+  Serial.print("  Right: ");
+  Serial.print(rightValue);
+  Serial.print("  Dir: ");
+  Serial.println(lastDirection);
+
+  if (rightValue >= DETECT_LIMIT && leftValue < DETECT_LIMIT) {
+    // Outside right sensor on line - turn right to correct
+    turnRight();
+  }
+  else if (leftValue >= DETECT_LIMIT && rightValue < DETECT_LIMIT) {
+    // Inside left sensor touched line
+    // Gentle inside correction only not a full turn
+    insideCorrect();
+  }
+  else if (leftValue < DETECT_LIMIT && rightValue < DETECT_LIMIT) {
+    // Neither sensor on line - move forward
+    moveForward();
+  }
+  else if (leftValue >= DETECT_LIMIT && rightValue >= DETECT_LIMIT) {
+    // Both on line - gentle left bias to stay counterclockwise
+    setMotors(40, false, 170, false);
+    delay(20);
+    setMotors(0, false, 0, false);
+    delay(10);
+    lastDirection = 'F';
+    moveForward();
+    delay(30);
+  }
+}
